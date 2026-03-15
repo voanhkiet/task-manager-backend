@@ -1,7 +1,8 @@
 from flask import Blueprint, render_template, request, redirect, jsonify
-from .models import Task
+from .models import Task, User
 from . import db
-
+from flask_jwt_extended import create_access_token, jwt_required, get_jwt_identity
+from werkzeug.security import generate_password_hash, check_password_hash
 main = Blueprint("main", __name__)
 
 
@@ -53,8 +54,12 @@ def delete(id):
   return redirect("/")
 
 @main.route("/api/tasks")
+@jwt_required()
 def api_tasks():
-  tasks = Task.query.all()
+
+  user_id = get_jwt_identity()
+
+  tasks = Task.query.filter_by(user_id=user_id).all()
 
   data = []
 
@@ -62,13 +67,16 @@ def api_tasks():
     data.append({
       "id": task.id,
       "title": task.title,
-      "completed": task.complete
+      "complete": task.complete
     })
 
   return jsonify(data)
 
 @main.route("/api/tasks", methods=["POST"])
+@jwt_required()
 def api_add_task():
+
+  user_id = get_jwt_identity()
 
   data = request.json
 
@@ -80,6 +88,7 @@ def api_add_task():
 
   task = Task(
     title=data["title"],
+    user_id=user_id,
     complete=False
   )
 
@@ -92,6 +101,7 @@ def api_add_task():
   }), 201
 
 @main.route("/api/task/<int:id>/complete", methods=["PUT"])
+@jwt_required()
 def api_complete_task(id):
   task = Task.query.get_or_404(id)
   task.complete = True
@@ -100,9 +110,40 @@ def api_complete_task(id):
   return jsonify({"message":"task completed"})
 
 @main.route("/api/tasks/<int:id>", methods=["DELETE"])
+@jwt_required()
 def api_delete_task(id):
-  task = Task.query.get_or_404(id)
+  user_id = get_jwt_identity()
+  task = Task.query.filter_by(id=id, user_id=user_id).first_or_404()
   db.session.delete(task)
   db.session.commit()
 
   return jsonify({"message": "task deleted"})
+
+@main.route("/api/register", methods=["POST"])
+def register():
+
+  data = request.json
+
+  user = User(
+    email=data["email"],
+    password=generate_password_hash(data["password"])
+  )
+
+  db.session.add(user)
+  db.session.commit()
+
+  return {"message": "user created"}
+
+@main.route("/api/login", methods=["POST"])
+def login():
+
+  data = request.json
+
+  user = User.query.filter_by(email=data["email"]).first()
+
+  if not user or not check_password_hash(user.password, data["password"]) :
+    return {"error": "invalid credentials"}, 401
+  
+  token = create_access_token(identity=user.id)
+
+  return {"token": token}
